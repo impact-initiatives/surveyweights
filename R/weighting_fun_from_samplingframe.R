@@ -29,7 +29,9 @@
 weighting_fun_from_samplingframe <- function(sampling.frame,
                                              data.stratum.column,
                                              sampling.frame.population.column="population",
-                                             sampling.frame.stratum.column="stratum",data=NULL){
+                                             sampling.frame.stratum.column="stratum",
+                                             data=NULL,
+                                             weighting.fixed=TRUE){
 
 
   if(length(data.stratum.column)!=1){stop("must provide exactly one data.stratum.column. If your strata are based on multiple columns, concatenate them first into a new variable.")}
@@ -80,40 +82,82 @@ weighting_fun_from_samplingframe <- function(sampling.frame,
   }
 
 
-  # closure function that calculates weights on the fly
-  # uses immutable data provided to load_samplingframe()
-  weights_of<- function(df) {
+if(weighting.fixed){
+    data<-lapply(data,function(x){if(is.factor(x)){return(as.character(x))};x}) %>% as.data.frame(stringsAsFactors=FALSE)
+    # # insure stratum column exists in data:
+    if (!all(data.stratum.column %in% names(data))){stop(paste0("data frame column '",data.stratum.column, "'not found."))}
+    
+    # make sure data is handled as characters, not factors. otherwise we match factor id's instead of names
+    data[[data.stratum.column]]<-as.character(data[[data.stratum.column]])
+    data <- data[!is.na(data.stratum.column),]
+    data <- data[!(data[[data.stratum.column]] %in% c("NA", "N/A", "#N/A")),]
+    
+	# assign full data to environment - fix the weight calculation
+	asdhk<<-data
+	
+	
+	weights_of<- function(df) {
+		if(!is.data.frame(df)){stop("df must be a data.frame")}
 
-    if(!is.data.frame(df)){stop("df must be a data.frame")}
+		# in case of tibble.. just to be sure (as tibbles weren't originally accounted for)
+		df<-as.data.frame(df,stringsAsFactors = FALSE)
+		# factors scare me:
+		df<-lapply(df,function(x){if(is.factor(x)){return(as.character(x))};x}) %>% as.data.frame(stringsAsFactors=FALSE)
+		# # insure stratum column exists in df:
+		if (!all(data.stratum.column %in% names(df))){stop(paste0("data frame column '",data.stratum.column, "'not found."))}
 
-    # in case of tibble.. just to be sure (as tibbles weren't originally accounted for)
-    df<-as.data.frame(df,stringsAsFactors = FALSE)
-    # factors scare me:
-    df<-lapply(df,function(x){if(is.factor(x)){return(as.character(x))};x}) %>% as.data.frame(stringsAsFactors=FALSE)
-    # # insure stratum column exists in df:
-    if (!all(data.stratum.column %in% names(df))){stop(paste0("data frame column '",data.stratum.column, "'not found."))}
+		# make sure df is handled as characters, not factors. otherwise we match factor id's instead of names
+		df[[data.stratum.column]]<-as.character(df[[data.stratum.column]])
 
-    # make sure df is handled as characters, not factors. otherwise we match factor id's instead of names
-    df[[data.stratum.column]]<-as.character(df[[data.stratum.column]])
-    df <- df[!is.na(data.stratum.column),]
-    df <- df[!(df[[data.stratum.column]] %in% c("NA", "N/A", "#N/A")),]
+		# count number of records in each stratum from full data
+		sample.counts<-stratify.count.sample(data.strata = asdhk[[data.stratum.column]],sf.strata = population.counts)
 
-    # count number of records in each stratum
-    sample.counts<-stratify.count.sample(data.strata = df[[data.stratum.column]],sf.strata = population.counts)
+		# make sure all record's strata can be found in the sampling frame:
+		if("weights" %in% names(df)){warning("'weights' is used as a column name (will not be calculated from the sampling frame)")}
+		if(!all(names(sample.counts) %in% names(population.counts))){stop("all strata names in column '", data.stratum.column,"' must also appear in the loaded sampling frame.")}
+		# population counts taken from weights_of() enclosing environment, created in load_samplingframe()
+		weights <- stratify.weights(pop_strata = population.counts,sample_strata = sample.counts)
+		# final test that mean of weights == 1
+		# insure(that.all=mean(weights[df[[data.stratum.column]]]) %almost.equals% 1,
+		#        err="Weighting calculation failed internally, this is our fault. Sorry! Contact the Reach Initiatives data unit to get this fixed!")
+		return(weights[df[[data.stratum.column]]])
+	}
+	 
+  
+  } else {
+	  # closure function that calculates weights on the fly
+	  # uses immutable data provided to load_samplingframe()
+	  weights_of<- function(df) {
 
-    # make sure all record's strata can be found in the sampling frame:
-    if("weights" %in% names(df)){warning("'weights' is used as a column name (will not be calculated from the sampling frame)")}
-    if(!all(names(sample.counts) %in% names(population.counts))){stop("all strata names in column '",
-                                                                      data.stratum.column,"' must also appear in the loaded sampling frame.")}
-    # population counts taken from weights_of() enclosing environment, created in load_samplingframe()
-    weights <- stratify.weights(pop_strata = population.counts,
-                                sample_strata = sample.counts)
-    # final test that mean of weights == 1
-    # insure(that.all=mean(weights[df[[data.stratum.column]]]) %almost.equals% 1,
-    #        err="Weighting calculation failed internally, this is our fault. Sorry! Contact the Reach Initiatives data unit to get this fixed!")
-    return(weights[df[[data.stratum.column]]])
+		if(!is.data.frame(df)){stop("df must be a data.frame")}
 
+		# in case of tibble.. just to be sure (as tibbles weren't originally accounted for)
+		df<-as.data.frame(df,stringsAsFactors = FALSE)
+		# factors scare me:
+		df<-lapply(df,function(x){if(is.factor(x)){return(as.character(x))};x}) %>% as.data.frame(stringsAsFactors=FALSE)
+		# # insure stratum column exists in df:
+		if (!all(data.stratum.column %in% names(df))){stop(paste0("data frame column '",data.stratum.column, "'not found."))}
 
+		# make sure df is handled as characters, not factors. otherwise we match factor id's instead of names
+		df[[data.stratum.column]]<-as.character(df[[data.stratum.column]])
+		df <- df[!is.na(data.stratum.column),]
+		df <- df[!(df[[data.stratum.column]] %in% c("NA", "N/A", "#N/A")),]
+
+		# count number of records in each stratum
+		sample.counts<-stratify.count.sample(data.strata = df[[data.stratum.column]],sf.strata = population.counts)
+
+		# make sure all record's strata can be found in the sampling frame:
+		if("weights" %in% names(df)){warning("'weights' is used as a column name (will not be calculated from the sampling frame)")}
+		if(!all(names(sample.counts) %in% names(population.counts))){stop("all strata names in column '",
+																		  data.stratum.column,"' must also appear in the loaded sampling frame.")}
+		# population counts taken from weights_of() enclosing environment, created in load_samplingframe()
+		weights <- stratify.weights(pop_strata = population.counts,
+									sample_strata = sample.counts)
+		# final test that mean of weights == 1
+		# insure(that.all=mean(weights[df[[data.stratum.column]]]) %almost.equals% 1,
+		#        err="Weighting calculation failed internally, this is our fault. Sorry! Contact the Reach Initiatives data unit to get this fixed!")
+		return(weights[df[[data.stratum.column]]])
+	  }
   }
 
   return(weights_of)
